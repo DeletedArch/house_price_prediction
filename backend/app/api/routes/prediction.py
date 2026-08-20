@@ -1,7 +1,7 @@
-from typing import Any, Dict
+from typing import Dict
 from fastapi import APIRouter, HTTPException, status
 
-from app.schemas.prediction import PredictionRequest
+from app.schemas.prediction import PredictionRequest, PredictionResponse
 from app.services.inference import inference_service
 from app.utils.logging_config import logger
 
@@ -9,35 +9,43 @@ router = APIRouter(tags=["Prediction"])
 
 
 @router.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
-def health_check() -> Dict[str, Any]:
+def health_check() -> Dict[str, str]:
     """
     Health check endpoint for the prediction service.
-    Verifies that the route is accessible and indicates whether the ML model is loaded.
+    Returns standard status 'ok'.
     """
-    is_model_loaded = getattr(inference_service, "model", None) is not None
-    return {
-        "status": "healthy",
-        "service": "prediction_api",
-        "model_loaded": is_model_loaded,
-    }
+    return {"status": "ok"}
 
 
-@router.post("/predict", status_code=status.HTTP_200_OK)
-@router.post("/predict/", status_code=status.HTTP_200_OK, include_in_schema=False)
-def predict(request: PredictionRequest) -> Any:
+@router.post(
+    "/predict",
+    response_model=PredictionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Predict House Price",
+    description="Accepts property features and returns the predicted market price.",
+)
+@router.post(
+    "/predict/",
+    response_model=PredictionResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def predict_price(request: PredictionRequest) -> PredictionResponse:
     """
-    Predict house price based on input property features.
-
-    Accepts property details in the request body and returns the estimated price.
+    Predicts house price given input property features.
     """
     try:
-        logger.info(f"Received prediction request: {request}")
-        result = inference_service.predict(request)
-        return result
+        logger.info(
+            f"Prediction requested for location='{request.location}', "
+            f"area={request.carpet_area_sqft} sqft, bath={request.bathroom}, floor={request.floor_num}"
+        )
+        response = inference_service.predict(request)
+        return response
     except Exception as e:
-        logger.error(f"Error during prediction: {e}", exc_info=True)
+        logger.error(f"Prediction failed with exception: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prediction error: {str(e)}",
+            detail=f"Inference service failed: {str(e)}",
         )
+
 
