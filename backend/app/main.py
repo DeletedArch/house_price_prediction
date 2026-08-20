@@ -1,5 +1,12 @@
+import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict
+
+# Ensure the backend directory is in sys.path when running this file directly
+backend_dir = str(Path(__file__).resolve().parent.parent)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,5 +79,12 @@ def root():
         "redoc": "/redoc",
         "api_v1": settings.API_V1_STR,
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
 
 
