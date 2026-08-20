@@ -1,44 +1,102 @@
 import pickle
 from pathlib import Path
+from typing import Any, Optional
+
+import joblib
+import numpy as np
+import pandas as pd
+
 from app.core.config import settings
 from app.schemas.prediction import PredictionRequest, PredictionResponse
-from app.services.preprocessing import PreprocessingService
+from app.services.preprocessing import preprocessing_service
 from app.utils.logging_config import logger
 
 
 class InferenceService:
     def __init__(self, model_path: Path = settings.MODEL_PATH):
         self.model_path = model_path
-        self.preprocessing_service = PreprocessingService()
-        self.model = self._load_model()
+        self.model: Optional[Any] = None
+        self.load_model()
 
-    def _load_model(self):
-        if not self.model_path.exists():
-            logger.warning(f"Model file not found at {self.model_path}. Using fallback mock predictor.")
-            return None
-        try:
-            with open(self.model_path, "rb") as f:
-                return pickle.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load model from {self.model_path}: {e}")
-            return None
+    def load_model(self) -> bool:
+        """
+        Loads the scikit-learn model/pipeline from disk using joblib.
+        Falls back to notebooks/house_price.pkl if the backend/models copy is absent.
+        """
+        search_paths = [
+            self.model_path,
+            settings.BASE_DIR.parent / "notebooks" / "house_price.pkl",
+        ]
+
+        for path in search_paths:
+            if path.exists():
+                try:
+                    # Attempt joblib loading first
+                    self.model = joblib.load(path)
+                    logger.info(f"ML model successfully loaded from {path}")
+                    return True
+                except Exception as e_joblib:
+                    logger.debug(f"joblib.load failed for {path}: {e_joblib}, trying pickle...")
+                    try:
+                        with open(path, "rb") as f:
+                            self.model = pickle.load(f)
+                        logger.info(f"ML model loaded via pickle from {path}")
+                        return True
+                    except Exception as e_pickle:
+                        logger.error(f"Failed to load model from {path}: {e_pickle}")
+
+        logger.warning(
+            f"No valid ML model found at {self.model_path}. "
+            "InferenceService will use heuristic fallback."
+        )
+        self.model = None
+        return False
 
     def predict(self, request: PredictionRequest) -> PredictionResponse:
-        features = self.preprocessing_service.preprocess_input(request)
-        
-        if self.model is not None and hasattr(self.model, "predict"):
-            # Real model inference logic
-            # input_vector = ...
-            # pred = self.model.predict(input_vector)[0]
-            estimated_price = round(request.total_sqft * 0.05 + request.bath * 2.5 + request.bhk * 5.0, 2)
-        else:
-            # Baseline heuristic formula if model artifact is a dummy
-            estimated_price = round(request.total_sqft * 0.045 + request.bath * 3.0 + request.bhk * 4.5, 2)
+        """
+        Executes price prediction for the given request.
+        Passes a single-row DataFrame to the pipeline if available,
+        or uses a fallback estimation algorithm if the model artifact is a placeholder.
+        """
+        df: pd.DataFrame = preprocessing_service.preprocess_to_df(request)
 
-        return PredictionResponse(
-            predicted_price=estimated_price,
-            features_used=request
-        )
+        if self.model is not None and hasattr(self.model, "predict"):
+            try:
+                pred = self.model.predict(df)
+                # Extract first prediction value
+                if isinstance(pred, (list, np.ndarray, pd.Series)):
+                    raw_price = float(pred[0])
+                else:
+                    raw_price = float(pred)
+                price = raw_price
+            except Exception as e:
+                logger.warning(
+                    f"Model predict failed with error: {e}. "
+                    "Falling back to heuristic calculation."
+                )
+                price = self._heuristic_prediction(request)
+        else:
+            price = self._heuristic_prediction(request)
+
+        return PredictionResponse(predicted_price=round(float(price), 2))
+
+    def _heuristic_prediction(self, request: PredictionRequest) -> float:
+        """Fallback baseline estimation when a fully-trained ML model is not available."""
+        base_rate = 5500.0  # ₹ per sqft baseline
+        area_component = request.carpet_area_sqft * base_rate
+        bath_component = request.bathroom * 75000.0
+        balcony_component = request.balcony * 30000.0
+        floor_component = request.floor_num * 15000.0
+
+        furnishing_multiplier = {
+            "Furnished": 1.15,
+            "Semi-Furnished": 1.05,
+            "Unfurnished": 1.0,
+        }.get(request.furnishing, 1.0)
+
+        total = (area_component + bath_component + balcony_component + floor_component) * furnishing_multiplier
+        return round(total, 2)
 
 
 inference_service = InferenceService()
+
