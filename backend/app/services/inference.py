@@ -12,6 +12,18 @@ from app.services.preprocessing import preprocessing_service
 from app.utils.logging_config import logger
 
 
+def format_inr(amount: float) -> str:
+    """Formats numeric amount into Indian denomination string (₹ ... Lac / ₹ ... Cr)."""
+    if amount >= 10000000:
+        cr = amount / 10000000.0
+        return f"₹ {cr:.2f} Cr"
+    elif amount >= 100000:
+        lac = amount / 100000.0
+        return f"₹ {lac:.2f} Lac"
+    else:
+        return f"₹ {amount:,.0f}"
+
+
 class InferenceService:
     def __init__(self, model_path: Path = settings.MODEL_PATH):
         self.model_path = model_path
@@ -78,7 +90,15 @@ class InferenceService:
         else:
             price = self._heuristic_prediction(request)
 
-        return PredictionResponse(predicted_price=round(float(price), 2))
+        price = round(float(price), 2)
+        formatted = format_inr(price)
+
+        return PredictionResponse(
+            predicted_price=price,
+            currency="INR",
+            formatted_price=formatted,
+            features_used=request,
+        )
 
     def _heuristic_prediction(self, request: PredictionRequest) -> float:
         """Fallback baseline estimation when a fully-trained ML model is not available."""
@@ -86,7 +106,7 @@ class InferenceService:
         area_component = request.carpet_area_sqft * base_rate
         bath_component = request.bathroom * 75000.0
         balcony_component = request.balcony * 30000.0
-        floor_component = request.floor_num * 15000.0
+        floor_component = max(0, request.floor_num) * 15000.0
 
         furnishing_multiplier = {
             "Furnished": 1.15,
@@ -99,4 +119,3 @@ class InferenceService:
 
 
 inference_service = InferenceService()
-
