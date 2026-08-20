@@ -1,7 +1,8 @@
 import logging
 import sys
 
-def setup_logging():
+
+def setup_logging() -> logging.Logger:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -9,4 +10,6 @@ def setup_logging():
     )
     return logging.getLogger("house_price_backend")
 
+
 logger = setup_logging()
+
